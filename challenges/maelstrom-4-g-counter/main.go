@@ -6,14 +6,30 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"time"
 
 	maelstrom "github.com/jepsen-io/maelstrom/demo/go"
 )
 
-func write(kv *maelstrom.KV, key string, val int) error {
-	var rpcError *maelstrom.RPCError
+var (
+	writeKey    = "writing"
+	readKey     = "reading"
+	registerKey = "register"
+	ctx         = context.TODO()
+)
 
-	count, err := kv.ReadInt(context.TODO(), key)
+func write(kv *maelstrom.KV, val int) error {
+	var (
+		rpcError *maelstrom.RPCError
+		err      error
+	)
+
+	err = kv.Write(ctx, writeKey, true)
+	if err != nil {
+		return err
+	}
+
+	count, err := kv.ReadInt(ctx, registerKey)
 	if err != nil {
 		if errors.As(err, &rpcError) && rpcError.Code == maelstrom.KeyDoesNotExist {
 			count = 0
@@ -22,11 +38,22 @@ func write(kv *maelstrom.KV, key string, val int) error {
 		}
 	}
 
-	return kv.CompareAndSwap(context.TODO(), key, count, int(val)+count, true)
+	err = kv.Write(ctx, registerKey, int(val)+count)
+	if err != nil {
+		return err
+	}
+
+	return kv.Write(ctx, writeKey, false)
 }
 
-func read(kv *maelstrom.KV, key string) (int, error) {
-	val, err := kv.ReadInt(context.TODO(), key)
+func read(kv *maelstrom.KV) (int, error) {
+	var err error
+	err = kv.Write(ctx, readKey, time.Now())
+	if err != nil {
+		return 0, err
+	}
+
+	val, err := kv.ReadInt(ctx, registerKey)
 
 	if err != nil {
 		var rpcError *maelstrom.RPCError
@@ -58,9 +85,9 @@ func main() {
 		if !ok {
 			return fmt.Errorf("cannot type assert 'delta' to float64: %v", body)
 		}
-		err = write(kv, n.ID(), int(val))
+		err = write(kv, int(val))
 		for err != nil {
-			err = write(kv, n.ID(), int(val))
+			err = write(kv, int(val))
 		}
 
 		body["type"] = "add_ok"
@@ -70,19 +97,14 @@ func main() {
 	})
 
 	n.Handle("read", func(msg maelstrom.Message) error {
-		sum := 0
-		for _, id := range n.NodeIDs() {
-			val, err := read(kv, id)
-			for err != nil {
-				val, err = read(kv, id)
-			}
-			sum += val
-
+		val, err := read(kv)
+		for err != nil {
+			val, err = read(kv)
 		}
 
 		body := map[string]any{
 			"type":  "read_ok",
-			"value": sum,
+			"value": val,
 		}
 		return n.Reply(msg, body)
 

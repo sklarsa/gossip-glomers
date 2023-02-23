@@ -1,4 +1,4 @@
-module github.com/sklarsa/gossip-glomers/challenges/maelstrom-3-broadcast
+module github.com/sklarsa/gossip-glomers/challenges/maelstrom-3a-broadcast
 
 go 1.19
 
