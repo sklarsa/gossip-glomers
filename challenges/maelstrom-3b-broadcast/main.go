@@ -33,7 +33,6 @@ func main() {
 
 		// Find visible nodes that are not the sender and relay the message
 		visibleNodes := getVisibleNodeIds(n, topology)
-		println(visibleNodes)
 		for _, id := range visibleNodes {
 			if id != msg.Src {
 				err := n.Send(id, body)
