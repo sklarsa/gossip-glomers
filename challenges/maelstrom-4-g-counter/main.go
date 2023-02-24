@@ -13,7 +13,8 @@ import (
 
 var (
 	ctx            = context.TODO()
-	gossipInterval = 1 * time.Second
+	gossipInterval = 500 * time.Second
+	key            = "count"
 )
 
 func getVisibleNodeIds(n *maelstrom.Node, topology map[string]any) []string {
@@ -27,11 +28,10 @@ func getVisibleNodeIds(n *maelstrom.Node, topology map[string]any) []string {
 		retVal = append(retVal, n.(string))
 	}
 	return retVal
-
 }
 
-func readCount(thisNodeId string, kv *maelstrom.KV, targetNodeId string) (int, error) {
-	val, err := kv.ReadInt(ctx, fmt.Sprintf("%s-%s", thisNodeId, targetNodeId))
+func readCount(kv *maelstrom.KV) (int, error) {
+	val, err := kv.ReadInt(ctx, key)
 	var rpcErr *maelstrom.RPCError
 	if errors.As(err, &rpcErr) && rpcErr.Code == maelstrom.KeyDoesNotExist {
 		val = 0
@@ -40,8 +40,26 @@ func readCount(thisNodeId string, kv *maelstrom.KV, targetNodeId string) (int, e
 	return val, err
 }
 
-func writeCount(n *maelstrom.Node, kv *maelstrom.KV, nodeId string, count int) error {
-	return kv.Write(ctx, fmt.Sprintf("%s-%s", n.ID(), nodeId), count)
+func writeCount(kv *maelstrom.KV, count int) error {
+	return kv.Write(ctx, key, count)
+}
+
+func writeDelta(kv *maelstrom.KV, delta int) error {
+	count, err := readCount(kv)
+	if err != nil {
+		return err
+	}
+	err = kv.CompareAndSwap(ctx, key, count, count+delta, true)
+	var rpcErr *maelstrom.RPCError
+	for errors.As(err, &rpcErr) && rpcErr.Code == maelstrom.PreconditionFailed {
+		count, err = readCount(kv)
+		if err != nil {
+			return err
+		}
+		err = kv.CompareAndSwap(ctx, key, count, count+delta, true)
+
+	}
+	return err
 }
 
 func main() {
@@ -58,7 +76,7 @@ func main() {
 
 		visibleNodes := getVisibleNodeIds(n, topology)
 		for _, id := range visibleNodes {
-			count, err := readCount(n.ID(), kv, id)
+			count, err := readCount(kv)
 			if err != nil {
 				panic(err)
 			}
@@ -82,20 +100,34 @@ func main() {
 			return err
 		}
 
-		nodeId := msg.Src
 		gossipCount := int(body["count"].(float64))
 
-		storeCount, err := readCount(n.ID(), kv, nodeId)
+		storeCount, err := readCount(kv)
 		if err != nil {
 			return err
 		}
 
 		if gossipCount > storeCount {
-			err = writeCount(n, kv, nodeId, gossipCount)
+			err = writeCount(kv, gossipCount)
 			if err != nil {
 				return err
 			}
+		}
 
+		newCount, err := readCount(kv)
+		if err != nil {
+			return err
+		}
+		body["count"] = newCount
+
+		visibleNodes := getVisibleNodeIds(n, topology)
+		for _, id := range visibleNodes {
+			if id != msg.Src {
+				err := n.Send(id, body)
+				if err != nil {
+					return err
+				}
+			}
 		}
 
 		return nil
@@ -104,9 +136,12 @@ func main() {
 
 	n.Handle("add", func(msg maelstrom.Message) error {
 
-		var body map[string]any
+		var (
+			body map[string]any
+			err  error
+		)
 
-		if err := json.Unmarshal(msg.Body, &body); err != nil {
+		if err = json.Unmarshal(msg.Body, &body); err != nil {
 			return err
 		}
 
@@ -115,12 +150,7 @@ func main() {
 			return fmt.Errorf("cannot type assert 'delta' to float64: %v", body)
 		}
 
-		count, err := readCount(n.ID(), kv, n.ID())
-		if err != nil {
-			return err
-		}
-
-		err = writeCount(n, kv, n.ID(), count+int(val))
+		err = writeDelta(kv, int(val))
 		if err != nil {
 			return err
 		}
@@ -131,21 +161,14 @@ func main() {
 	})
 
 	n.Handle("read", func(msg maelstrom.Message) error {
-		sum := 0
-		for _, id := range n.NodeIDs() {
-			for _, id2 := range n.NodeIDs() {
-				count, err := readCount(id, kv, id2)
-				if err != nil {
-					return err
-				}
-				sum += count
-			}
-
+		count, err := readCount(kv)
+		if err != nil {
+			return err
 		}
 
 		return n.Reply(msg, map[string]any{
 			"type":  "read_ok",
-			"value": sum,
+			"value": count,
 		})
 	})
 
