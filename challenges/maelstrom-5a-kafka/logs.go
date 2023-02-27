@@ -2,16 +2,21 @@ package main
 
 import (
 	"encoding/json"
+	"sync"
 )
 
 type LogStorage struct {
 	logs    map[string][]int
 	commits map[string]int
+	mu      *sync.Mutex
 
 	MaxLogsToReturn int
 }
 
 func (s *LogStorage) Append(key string, msg int) int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
 	_, ok := s.logs[key]
 	if !ok {
 		s.logs[key] = []int{msg}
@@ -23,6 +28,9 @@ func (s *LogStorage) Append(key string, msg int) int {
 }
 
 func (s *LogStorage) Poll(key string, offset int) []Log {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
 	msgs := []Log{}
 	logs, ok := s.logs[key]
 	if !ok {
@@ -45,10 +53,16 @@ func (s *LogStorage) Poll(key string, offset int) []Log {
 }
 
 func (s *LogStorage) Commit(key string, offset int) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
 	s.commits[key] = offset
 }
 
 func (s *LogStorage) GetCommitedOffset(key string) int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
 	return s.commits[key]
 }
 
@@ -56,6 +70,7 @@ func NewLogStorage() *LogStorage {
 	return &LogStorage{
 		logs:            map[string][]int{},
 		commits:         map[string]int{},
+		mu:              &sync.Mutex{},
 		MaxLogsToReturn: 10,
 	}
 }
