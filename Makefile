@@ -3,7 +3,7 @@ maelstrom_version ?= v0.2.2
 .PHONY: install-mac
 install-mac:
 	echo $(maelstrom_version)
-	brew install openjdk graphviz gnuplot
+	brew install openjdk graphviz gnuplot gh
 	gh release download $(maelstrom_version) -R jepsen-io/maelstrom -O - | tar -xvf -
 
 .PHONY: run-1-echo
@@ -30,3 +30,8 @@ run-3b-broadcast:
 run-4-g-counter:
 	cd challenges/maelstrom-4-g-counter && go install .
 	cd maelstrom && ./maelstrom test -w g-counter --bin ~/go/bin/maelstrom-4-g-counter --node-count 3 --rate 100 --time-limit 20 --nemesis partition
+
+.PHONY: run-5a-kafka
+run-5a-kafka:
+	cd challenges/maelstrom-5a-kafka && go install .
+	cd maelstrom && ./maelstrom test -w kafka --bin ~/go/bin/maelstrom-5a-kafka --node-count 1 --time-limit 5 --rate 1000
