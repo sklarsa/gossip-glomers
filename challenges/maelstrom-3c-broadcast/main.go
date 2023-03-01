@@ -8,6 +8,46 @@ import (
 	maelstrom "github.com/jepsen-io/maelstrom/demo/go"
 )
 
+func broadcast(n *maelstrom.Node, message float64) {
+	go func() {
+		acks := map[string]bool{}
+		var allAcked bool
+
+		for _, id := range n.NodeIDs() {
+			if id != n.ID() {
+				acks[id] = false
+			}
+		}
+
+		for !allAcked {
+			replicationBody := map[string]any{
+				"type":    "ack",
+				"message": message,
+			}
+
+			replicationBody["type"] = "replicate"
+			for id, acked := range acks {
+				if !acked {
+					err := n.Send(id, replicationBody)
+					if err == nil {
+						acks[id] = true
+					}
+				}
+			}
+
+			allAcked = true
+			for _, acked := range acks {
+				if !acked {
+					allAcked = false
+				}
+			}
+
+			time.Sleep(100 * time.Millisecond)
+		}
+
+	}()
+}
+
 func main() {
 	n := maelstrom.NewNode()
 	seenValues := []float64{}
@@ -20,47 +60,11 @@ func main() {
 			return err
 		}
 
-		go func() {
-			acks := map[string]bool{}
-			var allAcked bool
-
-			for _, id := range n.NodeIDs() {
-				if id != n.ID() {
-					acks[id] = false
-				}
-			}
-
-			for !allAcked {
-				replicationBody := map[string]any{
-					"type":    "ack",
-					"message": body["message"],
-				}
-
-				replicationBody["type"] = "replicate"
-				for id, acked := range acks {
-					if !acked {
-						err := n.Send(id, replicationBody)
-						if err == nil {
-							acks[id] = true
-						}
-					}
-				}
-
-				allAcked = true
-				for _, acked := range acks {
-					if !acked {
-						allAcked = false
-					}
-				}
-
-				time.Sleep(100 * time.Millisecond)
-			}
-
-		}()
-
 		// Find visible nodes that are not the sender and relay the message
 
 		val := body["message"].(float64)
+
+		broadcast(n, val)
 
 		seenValues = append(seenValues, val)
 
