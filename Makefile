@@ -26,6 +26,12 @@ run-3b-broadcast:
 	cd challenges/maelstrom-3b-broadcast && go install .
 	cd maelstrom && ./maelstrom test -w broadcast --bin ~/go/bin/maelstrom-3b-broadcast --node-count 5 --time-limit 20 --rate 10
 
+.PHONY: run-3c-broadcast
+run-3c-broadcast:
+	cd challenges/maelstrom-3c-broadcast && go install .
+	cd maelstrom && ./maelstrom test -w broadcast --bin ~/go/bin/maelstrom-3c-broadcast --node-count 5 --time-limit 20 --rate 10
+
+
 .PHONY: run-4-g-counter
 run-4-g-counter:
 	cd challenges/maelstrom-4-g-counter && go install .
