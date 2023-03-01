@@ -35,3 +35,8 @@ run-4-g-counter:
 run-5a-kafka:
 	cd challenges/maelstrom-5a-kafka && go install .
 	cd maelstrom && ./maelstrom test -w kafka --bin ~/go/bin/maelstrom-5a-kafka --node-count 1 --concurrency 2n --time-limit 20 --rate 1000
+
+.PHONY: run-5b-kafka
+run-5b-kafka:
+	cd challenges/maelstrom-5b-kafka && go install .
+	cd maelstrom && ./maelstrom test -w kafka --bin ~/go/bin/maelstrom-5b-kafka --node-count 2 --concurrency 2n --time-limit 5 --rate 100
