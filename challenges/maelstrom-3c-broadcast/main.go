@@ -13,7 +13,7 @@ func main() {
 	n := maelstrom.NewNode()
 	seenValues := map[float64]bool{}
 	mu := &sync.Mutex{}
-	gossipInterval := 100 * time.Millisecond
+	gossipInterval := 500 * time.Millisecond
 	ticker := time.NewTicker(gossipInterval)
 
 	go func() {
@@ -21,9 +21,11 @@ func main() {
 			<-ticker.C
 			// Gossip here
 			seenValuesToSend := []float64{}
+			mu.Lock()
 			for v := range seenValues {
 				seenValuesToSend = append(seenValuesToSend, v)
 			}
+			mu.Unlock()
 			for _, id := range n.NodeIDs() {
 				if id == n.ID() {
 					continue
@@ -53,9 +55,11 @@ func main() {
 		remoteSeenValues := body["seenValues"].([]any)
 
 		for _, v := range remoteSeenValues {
+			mu.Lock()
 			if _, ok := seenValues[v.(float64)]; !ok {
 				seenValues[v.(float64)] = true
 			}
+			mu.Unlock()
 		}
 
 		return nil
@@ -103,9 +107,11 @@ func main() {
 
 	n.Handle("read", func(msg maelstrom.Message) error {
 		vals := []float64{}
+		mu.Lock()
 		for v := range seenValues {
 			vals = append(vals, v)
 		}
+		mu.Unlock()
 		body := map[string]any{
 			"type":     "read_ok",
 			"messages": vals,
