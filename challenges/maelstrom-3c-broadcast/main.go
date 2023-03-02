@@ -3,54 +3,64 @@ package main
 import (
 	"encoding/json"
 	"log"
+	"sync"
 	"time"
 
 	maelstrom "github.com/jepsen-io/maelstrom/demo/go"
 )
 
-func broadcast(n *maelstrom.Node, message float64) {
+func main() {
+	n := maelstrom.NewNode()
+	seenValues := map[float64]bool{}
+	mu := &sync.Mutex{}
+	gossipInterval := 100 * time.Millisecond
+	ticker := time.NewTicker(gossipInterval)
+
 	go func() {
-		acks := map[string]bool{}
-		var allAcked bool
-
-		for _, id := range n.NodeIDs() {
-			if id != n.ID() {
-				acks[id] = false
+		for {
+			<-ticker.C
+			// Gossip here
+			seenValuesToSend := []float64{}
+			for v := range seenValues {
+				seenValuesToSend = append(seenValuesToSend, v)
 			}
-		}
+			for _, id := range n.NodeIDs() {
+				if id == n.ID() {
+					continue
+				}
 
-		for !allAcked {
-			replicationBody := map[string]any{
-				"type":    "ack",
-				"message": message,
-			}
+				body := map[string]any{
+					"type":       "gossip",
+					"seenValues": seenValuesToSend,
+				}
 
-			replicationBody["type"] = "replicate"
-			for id, acked := range acks {
-				if !acked {
-					err := n.Send(id, replicationBody)
-					if err == nil {
-						acks[id] = true
-					}
+				err := n.Send(id, body)
+				if err != nil {
+					panic(err)
 				}
 			}
-
-			allAcked = true
-			for _, acked := range acks {
-				if !acked {
-					allAcked = false
-				}
-			}
-
-			time.Sleep(100 * time.Millisecond)
 		}
 
 	}()
-}
 
-func main() {
-	n := maelstrom.NewNode()
-	seenValues := []float64{}
+	n.Handle("gossip", func(msg maelstrom.Message) error {
+		var body map[string]any
+
+		if err := json.Unmarshal(msg.Body, &body); err != nil {
+			return err
+		}
+
+		remoteSeenValues := body["seenValues"].([]any)
+
+		for _, v := range remoteSeenValues {
+			if _, ok := seenValues[v.(float64)]; !ok {
+				seenValues[v.(float64)] = true
+			}
+		}
+
+		return nil
+
+	})
 
 	n.Handle("broadcast", func(msg maelstrom.Message) error {
 		// Unmarshal the message body as an loosely-typed map.
@@ -64,9 +74,9 @@ func main() {
 
 		val := body["message"].(float64)
 
-		broadcast(n, val)
-
-		seenValues = append(seenValues, val)
+		mu.Lock()
+		seenValues[val] = true
+		mu.Unlock()
 
 		body["type"] = "broadcast_ok"
 		delete(body, "message")
@@ -82,16 +92,23 @@ func main() {
 		}
 
 		val := body["message"].(float64)
-		seenValues = append(seenValues, val)
 
-		return nil
+		mu.Lock()
+		seenValues[val] = true
+		mu.Unlock()
+
+		return n.Reply(msg, map[string]any{"replicate-ack": val})
 
 	})
 
 	n.Handle("read", func(msg maelstrom.Message) error {
+		vals := []float64{}
+		for v := range seenValues {
+			vals = append(vals, v)
+		}
 		body := map[string]any{
 			"type":     "read_ok",
-			"messages": seenValues,
+			"messages": vals,
 		}
 		return n.Reply(msg, body)
 	})
