@@ -13,7 +13,7 @@ func main() {
 	n := maelstrom.NewNode()
 	seenValues := map[float64]bool{}
 	mu := &sync.Mutex{}
-	gossipInterval := 500 * time.Millisecond
+	gossipInterval := 600 * time.Millisecond
 	ticker := time.NewTicker(gossipInterval)
 
 	go func() {
