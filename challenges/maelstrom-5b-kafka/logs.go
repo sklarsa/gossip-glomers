@@ -17,12 +17,32 @@ func logKey(key string) string {
 	return fmt.Sprintf("logs-%s", key)
 }
 
+func lockKey(key string) string {
+	return fmt.Sprintf("lock-%s", key)
+}
+
 type LogStorage struct {
 	n   *maelstrom.Node
 	kv  *maelstrom.KV
 	ctx context.Context
 
 	MaxLogsToReturn int
+}
+
+func (s *LogStorage) requestLock(key string) error {
+	err := s.kv.CompareAndSwap(s.ctx, lockKey(key), 0, 1, true)
+	var rpcError *maelstrom.RPCError
+	for errors.As(err, &rpcError) && rpcError.Code == maelstrom.PreconditionFailed {
+		err = s.kv.CompareAndSwap(s.ctx, lockKey(key), 0, 1, true)
+	}
+	return err
+}
+
+func (s *LogStorage) releaseLock(key string) {
+	err := s.kv.Write(s.ctx, lockKey(key), 0)
+	if err != nil {
+		panic(err)
+	}
 }
 
 func (s *LogStorage) Append(key string, msg int) (int, error) {
@@ -32,39 +52,41 @@ func (s *LogStorage) Append(key string, msg int) (int, error) {
 		logs     []any
 	)
 
+	err := s.requestLock(key)
+	defer s.releaseLock(key)
+
+	if err != nil {
+		return 0, err
+	}
+
 	logData, err := s.kv.Read(s.ctx, logKey(key))
 	if errors.As(err, &rpcError) && rpcError.Code == maelstrom.KeyDoesNotExist {
-		logs = []any{msg}
+		logs = []any{}
 	} else if err != nil {
 		return offset, err
 	}
 
+	// if logs are nil then logData exists
 	if logs == nil {
 		logs = logData.([]any)
 	}
 
 	logs = append(logs, msg)
 
-	err = s.kv.CompareAndSwap(s.ctx, logKey(key), logData, logs, true)
-	for errors.As(err, &rpcError) && rpcError.Code == maelstrom.PreconditionFailed {
-		logData, err = s.kv.Read(s.ctx, logKey(key))
-		if errors.As(err, &rpcError) && rpcError.Code == maelstrom.KeyDoesNotExist {
-			logData = []any{msg}
-		} else if err != nil {
-			return offset, err
-		}
-		if logs == nil {
-			logs = logData.([]any)
-		}
-		err = s.kv.CompareAndSwap(s.ctx, logKey(key), logData, logs, true)
-
+	err = s.kv.Write(s.ctx, logKey(key), logs)
+	if err != nil {
+		return 0, err
 	}
-
 	return len(logs) - 1, nil
 }
 
 func (s *LogStorage) Poll(key string, offset int) ([]Log, error) {
 	msgs := []Log{}
+	err := s.requestLock(key)
+	if err != nil {
+		return msgs, err
+	}
+	defer s.releaseLock(key)
 	logData, err := s.kv.Read(s.ctx, logKey(key))
 	var rpcError *maelstrom.RPCError
 	if errors.As(err, &rpcError) && rpcError.Code == maelstrom.KeyDoesNotExist {
@@ -93,11 +115,21 @@ func (s *LogStorage) Poll(key string, offset int) ([]Log, error) {
 }
 
 func (s *LogStorage) Commit(key string, offset int) error {
+	err := s.requestLock(key)
+	if err != nil {
+		return err
+	}
+	defer s.releaseLock(key)
 	return s.kv.Write(s.ctx, key, offset)
 }
 
 func (s *LogStorage) GetCommitedOffset(key string) (int, error) {
 	var rpcError *maelstrom.RPCError
+	err := s.requestLock(key)
+	defer s.releaseLock(key)
+	if err != nil {
+		return 0, err
+	}
 	val, err := s.kv.ReadInt(s.ctx, commitKey(key))
 	if errors.As(err, &rpcError) && rpcError.Code == maelstrom.KeyDoesNotExist {
 		return 0, nil
