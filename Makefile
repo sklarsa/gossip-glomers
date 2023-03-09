@@ -45,3 +45,8 @@ run-5a-kafka:
 run-5b-kafka:
 	cd challenges/maelstrom-5b-kafka && go install .
 	cd maelstrom && ./maelstrom test -w kafka --bin ~/go/bin/maelstrom-5b-kafka --node-count 2 --concurrency 2n --time-limit 20 --rate 1000
+
+.PHONY: run-6a-txn
+run-6a-txn:
+	cd challenges/maelstrom-6a-txn && go install .
+	cd maelstrom && ./maelstrom test -w txn-rw-register --bin ~/go/bin/maelstrom-6a-txn --node-count 1 --time-limit 20 --rate 1000 --concurrency 2n --consistency-models read-uncommitted --availability total
